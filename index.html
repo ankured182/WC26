@@ -143,24 +143,40 @@ body.light .exbar{background:var(--bg)}
 .conf-legend .dot{width:9px;height:9px;border-radius:50%;flex:none}
 /* ── PRINT ───────────────────────────────────────────────────────────────── */
 @media print{
-  .tabs,.exbar,.topbar-actions,.hint,.warn,.kohead,.conf-legend{display:none!important}
-  .view{display:block!important}
-  #v-groups,#v-third{display:none!important}
-  /* always print the desktop bracket, never the mobile tab UI */
+  /* hide all chrome */
+  .tabs,.exbar,.topbar-actions,.hint,.warn,.kohead,.conf-legend,
+  #toast,#v-groups,#v-third{display:none!important}
+  /* show only KO view */
+  .view{display:none!important}
+  #v-ko{display:block!important}
+  /* always show desktop bracket — never the mobile tab UI */
   #bracket{display:block!important;border:none!important;background:#fff!important;
-    padding:0!important;overflow:visible!important}
+    padding:4px!important;overflow:visible!important}
   #bracket-mobile{display:none!important}
+  /* CRITICAL: keep min-width so flex columns don't collapse to zero.
+     zoom:0.72 scales the 1180px layout to fit A3 landscape (≈1587px @ 96dpi) */
+  .wrap{zoom:0.72;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .brkrow{min-width:1180px!important;gap:3px!important}
+  .col{gap:4px!important}
+  /* readable light colors */
   body,html{background:white!important;color:#000!important}
-  body.light,body{--panel:#fff;--panel2:#f5f5f5;--line:#ddd;--ink:#000;--mut:#555;--mut2:#777;
-    --gold:#b07800;--winbg:#d4f0e0;--win:#1a6a40;--bg2:#f8f8f8;--body-bg:#fff}
-  .brkrow{min-width:unset!important;gap:4px!important}
+  body,body.light{
+    --panel:#fff;--panel2:#f0f0f0;--line:#ccc;--line2:#bbb;
+    --ink:#111;--mut:#555;--mut2:#777;
+    --gold:#8a6000;--gold2:#6a4800;
+    --winbg:#d4f0e0;--win:#1a6a40;--bg2:#f5f5f5;
+  }
   .tie{border:1px solid #ccc!important;background:#fff!important;break-inside:avoid}
-  .slot{padding:4px 6px!important}
-  .slot.win{background:#e8f5ee!important}
-  .mlab{color:#888!important;background:#f0f0f0!important}
-  .champ .cup{font-size:28px}
-  .colh{color:#555!important}
-  @page{size:A3 landscape;margin:12mm}
+  .slot{padding:4px 7px!important}
+  .slot.win{background:#d4f0e0!important}
+  .slot.win .nm{color:#000!important;font-weight:700!important}
+  .nm{color:#111!important}
+  .mlab{color:#666!important;background:#ebebeb!important}
+  .colh{color:#444!important;font-size:8px!important}
+  .champ .cup{font-size:26px}
+  .champ .who{font-size:14px!important}
+  .finalbox{border:1px solid #b07800!important;background:#fffbf0!important}
+  @page{size:A3 landscape;margin:8mm}
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -168,7 +184,7 @@ body.light .exbar{background:var(--bg)}
    Desktop bracket stays unchanged above this breakpoint
 ═══════════════════════════════════════════════════════════════ */
 .mob-bracket{display:none}
-@media(max-width:768px){
+@media screen and (max-width:768px){
   #bracket{display:none!important}
   .mob-bracket{display:block;background:var(--bg2);border:1px solid var(--line);
     border-radius:14px;overflow:hidden}
@@ -183,7 +199,7 @@ body.light .exbar{background:var(--bg)}
   .mob-round{display:none;padding:14px 12px}
   .mob-round.active{display:block;animation:fade .2s ease}
   .mob-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  @media(max-width:400px){.mob-grid{grid-template-columns:1fr}}
+  @media screen and (max-width:400px){.mob-grid{grid-template-columns:1fr}}
   .mob-card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   .mob-card.left-brk{border-top:2px solid var(--gold)}
   .mob-card.right-brk{border-top:2px solid #9fb6da}
@@ -738,28 +754,15 @@ document.getElementById("sharebtn").onclick=()=>{
 
 // Print
 document.getElementById("printbtn").onclick=()=>{
-  const isMob=window.innerWidth<=768;
-  const desk=document.getElementById("bracket");
-  const mob=document.getElementById("bracket-mobile");
-  // Switch to KO tab
+  // Navigate to KO tab and render fully
   document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));
   document.getElementById("v-ko").classList.add("active");
   renderKO();
-  // On mobile: show desktop bracket (print CSS handles the rest), hide mob UI
-  if(isMob){
-    desk.style.setProperty("display","block","important");
-    if(mob)mob.style.setProperty("display","none","important");
-  }
-  setTimeout(()=>{
-    window.print();
-    // Restore after a short delay (print dialog may be async)
-    if(isMob){
-      setTimeout(()=>{
-        desk.style.removeProperty("display");
-        if(mob)mob.style.removeProperty("display");
-      },400);
-    }
-  },150);
+  // Two rAFs ensure the browser has painted the layout,
+  // then 300ms extra for emoji/font rendering before print dialog
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    setTimeout(()=>window.print(), 300);
+  }));
 };
 
 function renderAll(){renderGroups();renderThird();renderKO();}
