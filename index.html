@@ -145,7 +145,7 @@ body.light .exbar{background:var(--bg)}
 @media print{
   /* hide all chrome */
   .tabs,.exbar,.topbar-actions,.hint,.warn,.kohead,.conf-legend,
-  #toast,#v-groups,#v-third{display:none!important}
+  #toast,#v-groups,#v-third,.topbar{display:none!important}
   /* show only KO view */
   .view{display:none!important}
   #v-ko{display:block!important}
@@ -316,9 +316,12 @@ body.light .exbar{background:var(--bg)}
   <div id="bracket-mobile" class="mob-bracket"></div>
     <div class="exbar">
       <button class="btn ghost" id="resetko">Reset KO picks</button>
+      <button class="btn ghost" id="importjson">📂 Import</button>
+      <button class="btn ghost" id="exportjson">💾 Export</button>
       <button class="btn ghost" id="dljpg">📷 Download JPG</button>
       <button class="btn" id="dlxlsx">⬇ Download Excel</button>
     </div>
+    <input type="file" id="jsonfile" accept=".json" style="display:none">
   </div>
 </div>
 
@@ -396,12 +399,58 @@ function loadCompact(compact){
     if(compact.p)S.picks=compact.p;
   }catch(e){defaultState();}
 }
+// ── Compact URL encoding (26 chars total) ──────────────────────────────────
+// Format: [12 group chars][2 thirds chars][1 mode char][11 pick chars]
+const B64U="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+// All 24 permutations of [0,1,2,3] in lexicographic order
+const PERMS=[[0,1,2,3],[0,1,3,2],[0,2,1,3],[0,2,3,1],[0,3,1,2],[0,3,2,1],
+             [1,0,2,3],[1,0,3,2],[1,2,0,3],[1,2,3,0],[1,3,0,2],[1,3,2,0],
+             [2,0,1,3],[2,0,3,1],[2,1,0,3],[2,1,3,0],[2,3,0,1],[2,3,1,0],
+             [3,0,1,2],[3,0,2,1],[3,1,0,2],[3,1,2,0],[3,2,0,1],[3,2,1,0]];
+const MATCH_IDS=Array.from({length:32},(_,i)=>73+i); // matches 73..104
 function encodeState(){
-  const compact={
-    g:LETTERS.map(l=>S.groups[l].map(t=>RAWG[l].findIndex(r=>r[0]===t.code))),
-    t:S.thirds,m:S.mode,p:S.picks
-  };
-  try{return btoa(unescape(encodeURIComponent(JSON.stringify(compact))));}catch(e){return"";}
+  try{
+    // groups: 12 chars — one base64url char per group encoding its permutation index
+    const gc=LETTERS.map(l=>{
+      const ord=S.groups[l].map(t=>RAWG[l].findIndex(r=>r[0]===t.code));
+      const pi=PERMS.findIndex(p=>p.every((v,i)=>v===ord[i]));
+      return B64U[pi<0?0:pi];
+    }).join('');
+    // thirds: 2 chars — 12-bit bitmask, bit i = group LETTERS[i] qualifies
+    let tb=0;S.thirds.forEach(g=>tb|=(1<<LETTERS.indexOf(g)));
+    const tc=B64U[tb>>6]+B64U[tb&63];
+    // mode: 1 char
+    const mc=S.mode==='official'?'o':'m';
+    // picks: 11 chars — 2 bits per match (0=none,1=a,2=b) × 32 matches = 64 bits
+    let pv=BigInt(0);
+    MATCH_IDS.forEach((m,i)=>{
+      const v=S.picks[m]==='a'?1n:S.picks[m]==='b'?2n:0n;
+      pv|=(v<<BigInt(i*2));
+    });
+    let pc='';for(let i=0;i<11;i++){pc+=B64U[Number(pv&63n)];pv>>=6n;}
+    return gc+tc+mc+pc;
+  }catch(e){return'';}
+}
+function decodeStateCompact(s){
+  // groups
+  LETTERS.forEach((l,i)=>{
+    const pi=B64U.indexOf(s[i]);
+    if(pi>=0&&pi<24){const ord=PERMS[pi];
+      S.groups[l]=ord.map(j=>({code:RAWG[l][j][0],name:RAWG[l][j][1]}));}
+  });
+  // thirds
+  const tb=(B64U.indexOf(s[12])<<6)|B64U.indexOf(s[13]);
+  S.thirds=LETTERS.filter((_,i)=>(tb>>i)&1);
+  // mode
+  S.mode=s[14]==='m'?'match':'official';
+  // picks
+  let pv=BigInt(0);
+  for(let i=0;i<11;i++){const c=B64U.indexOf(s[15+i]);if(c>=0)pv|=BigInt(c)<<BigInt(i*6);}
+  S.picks={};
+  MATCH_IDS.forEach((m,i)=>{
+    const v=Number((pv>>BigInt(i*2))&3n);
+    if(v===1)S.picks[m]='a';else if(v===2)S.picks[m]='b';
+  });
 }
 
 // ── Match structure ────────────────────────────────────────────────────────
@@ -730,6 +779,43 @@ document.querySelectorAll("#modeseg button").forEach(b=>b.onclick=()=>{
 document.getElementById("dlxlsx").onclick=dlExcel;
 document.getElementById("dljpg").onclick=dlJPG;
 document.getElementById("resetko").onclick=()=>{S.picks={};persist();renderKO();};
+
+// JSON export — save full bracket state as a named file
+document.getElementById("exportjson").onclick=()=>{
+  const compact={
+    v:1,
+    saved:new Date().toISOString().slice(0,16).replace('T',' '),
+    g:LETTERS.map(l=>S.groups[l].map(t=>RAWG[l].findIndex(r=>r[0]===t.code))),
+    t:S.thirds,m:S.mode,p:S.picks
+  };
+  const blob=new Blob([JSON.stringify(compact,null,2)],{type:"application/json"});
+  const a=document.createElement("a");
+  a.download=`WC2026_bracket_${compact.saved.replace(/[: ]/g,'-')}.json`;
+  a.href=URL.createObjectURL(blob);a.click();
+  URL.revokeObjectURL(a.href);
+  toast("💾 Bracket exported as JSON");
+};
+
+// JSON import — load a previously exported file
+document.getElementById("importjson").onclick=()=>
+  document.getElementById("jsonfile").click();
+
+document.getElementById("jsonfile").onchange=e=>{
+  const file=e.target.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const compact=JSON.parse(ev.target.result);
+      defaultState();loadCompact(compact);persist();
+      document.querySelectorAll("#modeseg button")
+        .forEach(b=>b.classList.toggle("on",b.dataset.m===S.mode));
+      renderAll();
+      toast(`📂 Bracket loaded${compact.saved?" (saved "+compact.saved+")":""}`);
+    }catch(err){toast("⚠️ Invalid bracket file");}
+    e.target.value=""; // reset so same file can be re-imported
+  };
+  reader.readAsText(file);
+};
 document.getElementById("resetall").onclick=()=>{
   if(!confirm("Reset everything to defaults?"))return;
   defaultState();persist();renderAll();toast("Reset to defaults");};
@@ -747,7 +833,7 @@ document.getElementById("themetoggle").onclick=()=>{_light=!_light;applyTheme();
 // Share
 document.getElementById("sharebtn").onclick=()=>{
   const code=encodeState();
-  const url=location.href.split("#")[0]+"#s="+code;
+  const url=location.origin+"/#s="+code;
   navigator.clipboard?navigator.clipboard.writeText(url).then(()=>toast("Link copied! Share it anywhere ✓"))
     .catch(()=>prompt("Copy this link:",url)):prompt("Copy this link:",url);
 };
@@ -775,9 +861,15 @@ function renderAll(){renderGroups();renderThird();renderKO();}
   const hash=location.hash;
   if(hash.startsWith("#s=")){
     try{
-      const compact=JSON.parse(decodeURIComponent(escape(atob(hash.slice(3)))));
-      loadCompact(compact);loaded=true;
-      // clean hash from URL without reload
+      const raw=hash.slice(3);
+      if(raw.startsWith('ey')){
+        // legacy: base64-encoded JSON (old links still work)
+        const compact=JSON.parse(decodeURIComponent(escape(atob(raw))));
+        loadCompact(compact);loaded=true;
+      } else {
+        // new: compact 26-char encoding
+        decodeStateCompact(raw);loaded=true;
+      }
       history.replaceState(null,"",location.pathname+location.search);
     }catch(e){defaultState();}
   }
